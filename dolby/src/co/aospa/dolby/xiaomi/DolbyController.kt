@@ -33,8 +33,12 @@ internal class DolbyController private constructor(
                 it.playerState == AudioPlaybackConfiguration.PLAYER_STATE_STARTED
             }
             dlog(TAG, "onPlaybackConfigChanged: isPlaying=$isPlaying")
-            if (isPlaying)
-                setCurrentProfile()
+            
+            if (isPlaying && dsOn) {
+                handler.postDelayed({
+                    setCurrentProfile()
+                }, 100)
+            }
         }
     }
 
@@ -73,10 +77,20 @@ internal class DolbyController private constructor(
         set(value) {
             dlog(TAG, "setDsOn: $value")
             checkEffect()
-            dolbyEffect.dsOn = value
-            registerCallbacks = value
-            if (value)
+            
+            if (!value) {
+                dolbyEffect.dsOn = false
+                registerCallbacks = false
+            } else {
+                dolbyEffect.release()
+                dolbyEffect = DolbyAudioEffect(EFFECT_PRIORITY, audioSession = 0)
+                dolbyEffect.dsOn = true
+                registerCallbacks = true
                 setCurrentProfile()
+                
+                // NUCLEAR OPTION: Force audio session restart
+                forceAudioSessionRestart()
+            }
         }
 
     var profile: Int
@@ -172,6 +186,87 @@ internal class DolbyController private constructor(
         dlog(TAG, "setCurrentProfile")
         val prefs = PreferenceManager.getDefaultSharedPreferences(context)
         profile = prefs.getString(DolbyConstants.PREF_PROFILE, "0" /*dynamic*/)!!.toInt()
+    }
+
+    private fun forceAudioSessionRestart() {
+        dlog(TAG, "forceAudioSessionRestart - NUCLEAR OPTION ACTIVATED")
+        
+        try {
+            val configs = audioManager.activePlaybackConfigurations
+            val isPlaying = configs.any {
+                it.playerState == AudioPlaybackConfiguration.PLAYER_STATE_STARTED
+            }
+            
+            if (isPlaying) {
+                dlog(TAG, "Audio is playing, forcing session restart with EXTREME PREJUDICE")
+                
+                // Method 1: Audio focus manipulation
+                val focusRequest = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    android.media.AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                        .setOnAudioFocusChangeListener { }
+                        .build()
+                } else {
+                    null
+                }
+                
+                if (focusRequest != null) {
+                    val result = audioManager.requestAudioFocus(focusRequest)
+                    if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+                        dlog(TAG, "Audio focus STOLEN, releasing in 150ms")
+                        handler.postDelayed({
+                            audioManager.abandonAudioFocusRequest(focusRequest)
+                            dlog(TAG, "Audio focus RETURNED")
+                            // Apply profile after restart
+                            handler.postDelayed({
+                                setCurrentProfile()
+                            }, 100)
+                        }, 150)
+                    }
+                } else {
+                    // Fallback for older Android versions
+                    @Suppress("DEPRECATION")
+                    val result = audioManager.requestAudioFocus(
+                        { },
+                        AudioManager.STREAM_MUSIC,
+                        AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
+                    )
+                    if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+                        handler.postDelayed({
+                            @Suppress("DEPRECATION")
+                            audioManager.abandonAudioFocus { }
+                            handler.postDelayed({
+                                setCurrentProfile()
+                            }, 100)
+                        }, 150)
+                    }
+                }
+                
+                // Method 2: Media button simulation as backup
+                handler.postDelayed({
+                    try {
+                        val pauseIntent = android.content.Intent(android.content.Intent.ACTION_MEDIA_BUTTON)
+                        val pauseEvent = android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_PAUSE)
+                        pauseIntent.putExtra(android.content.Intent.EXTRA_KEY_EVENT, pauseEvent)
+                        context.sendBroadcast(pauseIntent)
+                        
+                        handler.postDelayed({
+                            val playIntent = android.content.Intent(android.content.Intent.ACTION_MEDIA_BUTTON)
+                            val playEvent = android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_PLAY)
+                            playIntent.putExtra(android.content.Intent.EXTRA_KEY_EVENT, playEvent)
+                            context.sendBroadcast(playIntent)
+                            
+                            handler.postDelayed({
+                                setCurrentProfile()
+                            }, 200)
+                        }, 200)
+                    } catch (e: Exception) {
+                        dlog(TAG, "Media button simulation failed: $e")
+                    }
+                }, 300)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "NUCLEAR OPTION FAILED: $e")
+        }
     }
 
     fun setDsOnAndPersist(dsOn: Boolean) {

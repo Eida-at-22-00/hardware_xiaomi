@@ -29,6 +29,7 @@ class DolbyTileService : TileService() {
         dolbyController.setDsOnAndPersist(!isDsOn) // toggle
         qsTile.apply {
             state = if (isDsOn) Tile.STATE_INACTIVE else Tile.STATE_ACTIVE
+            subtitle = dolbyController.getProfileName() ?: getString(R.string.dolby_unknown)
             updateTile()
         }
         super.onClick()
