@@ -204,7 +204,7 @@ class DolbySettingsFragment : PreferenceFragment(),
 
     override fun onCheckedChanged(buttonView: CompoundButton, isChecked: Boolean) {
         dlog(TAG, "onCheckedChanged($isChecked)")
-        dolbyController.dsOn = isChecked
+        dolbyController.setDsOnAndPersist(isChecked)
         profilePref.setEnabled(isChecked)
         updateProfileSpecificPrefs()
     }

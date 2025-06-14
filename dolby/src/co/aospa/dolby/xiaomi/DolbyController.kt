@@ -33,8 +33,12 @@ internal class DolbyController private constructor(
                 it.playerState == AudioPlaybackConfiguration.PLAYER_STATE_STARTED
             }
             dlog(TAG, "onPlaybackConfigChanged: isPlaying=$isPlaying")
-            if (isPlaying)
-                setCurrentProfile()
+            
+            if (isPlaying && dsOn) {
+                handler.postDelayed({
+                    setCurrentProfile()
+                }, 100)
+            }
         }
     }
 
@@ -73,10 +77,23 @@ internal class DolbyController private constructor(
         set(value) {
             dlog(TAG, "setDsOn: $value")
             checkEffect()
-            dolbyEffect.dsOn = value
-            registerCallbacks = value
-            if (value)
+            
+            if (!value) {
+                // When turning OFF, properly release the effect
+                dolbyEffect.dsOn = false
+                registerCallbacks = false
+            } else {
+                // When turning ON, ensure fresh effect connection
+                if (!dolbyEffect.dsOn) {
+                    // Coming from OFF state, force recreate effect
+                    dolbyEffect.release()
+                    dolbyEffect = DolbyAudioEffect(EFFECT_PRIORITY, audioSession = 0)
+                }
+                dolbyEffect.dsOn = true
+                registerCallbacks = true
                 setCurrentProfile()
+                applyToCurrentPlayback()
+            }
         }
 
     var profile: Int
@@ -172,6 +189,34 @@ internal class DolbyController private constructor(
         dlog(TAG, "setCurrentProfile")
         val prefs = PreferenceManager.getDefaultSharedPreferences(context)
         profile = prefs.getString(DolbyConstants.PREF_PROFILE, "0" /*dynamic*/)!!.toInt()
+    }
+
+    private fun applyToCurrentPlayback() {
+        dlog(TAG, "applyToCurrentPlayback")
+        
+        try {
+            val configs = audioManager.activePlaybackConfigurations
+            val isPlaying = configs.any {
+                it.playerState == AudioPlaybackConfiguration.PLAYER_STATE_STARTED
+            }
+            
+            if (isPlaying) {
+                dlog(TAG, "Audio is playing, forcing effect reapplication")
+                
+                // Always recreate effect when applying to current playback
+                dolbyEffect.release()
+                dolbyEffect = DolbyAudioEffect(EFFECT_PRIORITY, audioSession = 0)
+                dolbyEffect.dsOn = true
+                setCurrentProfile()
+                
+                // Small delay to ensure effect is established
+                handler.postDelayed({
+                    setCurrentProfile()
+                }, 50)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error in applyToCurrentPlayback: $e")
+        }
     }
 
     fun setDsOnAndPersist(dsOn: Boolean) {
